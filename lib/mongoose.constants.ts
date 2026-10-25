@@ -8,7 +8,7 @@ export const RAW_OBJECT_DEFINITION = 'RAW_OBJECT_DEFINITION';
 export interface TenantConnectionEntry {
   promise: Promise<Connection>;
   connection?: Connection;
-  users: number;
+  owners: Set<symbol>;
 }
 
 export const tenantIdConnection = new Map<string, TenantConnectionEntry>();

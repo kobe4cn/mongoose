@@ -1,18 +1,10 @@
-import {
-  DynamicModule,
-  Global,
-  Inject,
-  Module,
-  OnApplicationShutdown,
-  Provider,
-  Type,
-} from '@nestjs/common';
-import { ModuleRef } from '@nestjs/core';
+import { DynamicModule, Global, Module, Provider, Type } from '@nestjs/common';
 import * as mongoose from 'mongoose';
 import { ConnectOptions, Connection } from 'mongoose';
 import { defer, lastValueFrom } from 'rxjs';
 import { catchError } from 'rxjs/operators';
 import { getConnectionToken, handleRetry } from './common/mongoose.utils.js';
+import { MongooseConnectionManager } from './mongoose-connection-manager.js';
 import {
   MongooseModuleAsyncOptions,
   MongooseModuleFactoryOptions,
@@ -22,17 +14,11 @@ import {
 import {
   MONGOOSE_CONNECTION_NAME,
   MONGOOSE_MODULE_OPTIONS,
-  tenantIdConnection,
 } from './mongoose.constants.js';
 
 @Global()
 @Module({})
-export class MongooseCoreModule implements OnApplicationShutdown {
-  constructor(
-    @Inject(MONGOOSE_CONNECTION_NAME) private readonly connectionName: string,
-    private readonly moduleRef: ModuleRef,
-  ) {}
-
+export class MongooseCoreModule {
   static forRoot(
     uri: string,
     options: MongooseModuleOptions = {} as MongooseModuleOptions,
@@ -65,15 +51,17 @@ export class MongooseCoreModule implements OnApplicationShutdown {
 
     const connectionProvider = {
       provide: mongooseConnectionName,
-      useFactory: async (): Promise<any> =>
+      useFactory: async (manager: MongooseConnectionManager): Promise<any> =>
         await lastValueFrom(
-          defer(async () =>
-            mongooseConnectionFactory(
-              await this.createMongooseConnection(uri, mongooseOptions, {
-                lazyConnection,
-                onConnectionCreate,
-              }),
-              mongooseConnectionName,
+          defer(() =>
+            manager.acquire(undefined, async () =>
+              mongooseConnectionFactory(
+                await this.createMongooseConnection(uri, mongooseOptions, {
+                  lazyConnection,
+                  onConnectionCreate,
+                }),
+                mongooseConnectionName,
+              ),
             ),
           ).pipe(
             handleRetry(retryAttempts, retryDelay, verboseRetryLog),
@@ -82,10 +70,15 @@ export class MongooseCoreModule implements OnApplicationShutdown {
             }),
           ),
         ),
+      inject: [MongooseConnectionManager],
     };
     return {
       module: MongooseCoreModule,
-      providers: [connectionProvider, mongooseConnectionNameProvider],
+      providers: [
+        connectionProvider,
+        mongooseConnectionNameProvider,
+        MongooseConnectionManager,
+      ],
       exports: [connectionProvider],
     };
   }
@@ -102,6 +95,7 @@ export class MongooseCoreModule implements OnApplicationShutdown {
       provide: mongooseConnectionName,
       useFactory: async (
         mongooseModuleOptions: MongooseModuleFactoryOptions,
+        manager: MongooseConnectionManager,
       ): Promise<any> => {
         const {
           tenantId,
@@ -150,31 +144,7 @@ export class MongooseCoreModule implements OnApplicationShutdown {
         };
 
         return await lastValueFrom(
-          defer(async () => {
-            if (cacheKey === undefined) {
-              return createConnection();
-            }
-            let entry = tenantIdConnection.get(cacheKey);
-            if (!entry) {
-              entry = {
-                promise: createConnection(),
-                users: 0,
-              };
-              tenantIdConnection.set(cacheKey, entry);
-            }
-            try {
-              const connection = await entry.promise;
-              entry.connection = connection;
-              entry.users += 1;
-              return connection;
-            } catch (err) {
-              //仅移除每次失败的条目
-              if (tenantIdConnection.get(cacheKey) === entry) {
-                tenantIdConnection.delete(cacheKey);
-              }
-              throw err;
-            }
-          }).pipe(
+          defer(() => manager.acquire(cacheKey, createConnection)).pipe(
             handleRetry(retryAttempts, retryDelay, verboseRetryLog),
             catchError((error) => {
               throw mongooseConnectionError(error);
@@ -182,7 +152,7 @@ export class MongooseCoreModule implements OnApplicationShutdown {
           ),
         );
       },
-      inject: [MONGOOSE_MODULE_OPTIONS],
+      inject: [MONGOOSE_MODULE_OPTIONS, MongooseConnectionManager],
     };
     const asyncProviders = this.createAsyncProviders(options);
     return {
@@ -190,6 +160,7 @@ export class MongooseCoreModule implements OnApplicationShutdown {
       imports: options.imports,
       providers: [
         ...asyncProviders,
+        MongooseConnectionManager,
         connectionProvider,
         mongooseConnectionNameProvider,
       ],
@@ -252,32 +223,5 @@ export class MongooseCoreModule implements OnApplicationShutdown {
     }
 
     return await connection.asPromise();
-  }
-  private connectionReleased = false;
-  async onApplicationShutdown() {
-    if (this.connectionReleased) return;
-
-    this.connectionReleased = true;
-
-    const connection = this.moduleRef.get<any>(this.connectionName);
-
-    if (!connection) {
-      return;
-    }
-    for (const [key, entry] of tenantIdConnection) {
-      if (entry.connection !== connection) {
-        continue;
-      }
-      entry.users -= 1;
-      if (entry.users === 0) {
-        tenantIdConnection.delete(key);
-        await connection.close();
-      }
-      return;
-    }
-
-    if (connection) {
-      await connection.close();
-    }
   }
 }

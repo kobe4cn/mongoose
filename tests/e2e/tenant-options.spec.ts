@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FactoryProvider } from '@nestjs/common';
 import * as mongoose from 'mongoose';
 import { MongooseCoreModule } from '../../lib/mongoose-core.module.js';
+import { MongooseConnectionManager } from '../../lib/mongoose-connection-manager.js';
 import { tenantIdConnection } from '../../lib/mongoose.constants.js';
 
 vi.mock('mongoose', () => ({ createConnection: vi.fn() }));
@@ -34,10 +35,14 @@ describe('tenant connection options', () => {
           'provide' in p &&
           p.provide === 'DatabaseConnection',
       ) as FactoryProvider;
-      const result = await provider.useFactory({
-        ...options,
-        uri: 'mongodb://localhost/test',
-      });
+      const manager = new MongooseConnectionManager();
+      const result =
+        mode === 'sync'
+          ? await provider.useFactory(manager)
+          : await provider.useFactory(
+              { ...options, uri: 'mongodb://localhost/test' },
+              manager,
+            );
       expect(result).toBe(connection);
       expect(mongoose.createConnection).toHaveBeenCalledExactlyOnceWith(
         'mongodb://localhost/test',

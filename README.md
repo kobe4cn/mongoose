@@ -1,4 +1,4 @@
-# @kevin/nestjs-mongoose
+# @kobe4cn/nestjs-mongoose
 
 基于官方 `@nestjs/mongoose` 12.0.0 的非官方修改版本，由 [Kevin Yang](https://github.com/kobe4cn) 维护，与 NestJS 官方团队无隶属关系。
 
@@ -18,7 +18,7 @@
 发布到 npm 的 `next` 标签后，可使用以下命令安装：
 
 ```bash
-npm install @kevin/nestjs-mongoose@next mongoose
+npm install @kobe4cn/nestjs-mongoose@next mongoose
 ```
 
 应用需提供兼容的依赖：NestJS 11 或 12、Mongoose 7/8/9、RxJS 7。
@@ -28,7 +28,7 @@ npm install @kevin/nestjs-mongoose@next mongoose
 从本包导入模块与装饰器：
 
 ```ts
-import { MongooseModule, InjectModel, InjectConnection } from '@kevin/nestjs-mongoose';
+import { MongooseModule, InjectModel, InjectConnection } from '@kobe4cn/nestjs-mongoose';
 ```
 
 在 Nest 模块的 `imports` 中注册连接：
@@ -64,7 +64,7 @@ private readonly connection: Connection;
 
 同时注册多个租户连接时，请使用不同的 `connectionName`，以区分 Nest 注入 token。同一个租户 ID 与连接名称组合必须对应相同的数据库配置。此实现用于初始化时注册的连接，不会根据每次请求的租户 ID 自动切换模型。
 
-基础用法可参考 [NestJS MongoDB 文档](https://docs.nestjs.com/techniques/mongodb)，使用时将包导入路径替换为 `@kevin/nestjs-mongoose`。
+基础用法可参考 [NestJS MongoDB 文档](https://docs.nestjs.com/techniques/mongodb)，使用时将包导入路径替换为 `@kobe4cn/nestjs-mongoose`。
 
 ## 本地构建与打包
 

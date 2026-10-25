@@ -1,10 +1,16 @@
-import { DynamicModule, Global, Module, Provider, Type } from '@nestjs/common';
+import {
+  DynamicModule,
+  Global,
+  Module,
+  OnApplicationShutdown,
+  Provider,
+  Type,
+} from '@nestjs/common';
 import * as mongoose from 'mongoose';
 import { ConnectOptions, Connection } from 'mongoose';
 import { defer, lastValueFrom } from 'rxjs';
 import { catchError } from 'rxjs/operators';
 import { getConnectionToken, handleRetry } from './common/mongoose.utils.js';
-import { MongooseConnectionManager } from './mongoose-connection-manager.js';
 import {
   MongooseModuleAsyncOptions,
   MongooseModuleFactoryOptions,
@@ -18,7 +24,10 @@ import {
 
 @Global()
 @Module({})
-export class MongooseCoreModule {
+export class MongooseCoreModule implements OnApplicationShutdown {
+  private static connections = new Map<string, Promise<Connection>>();
+  private static isShuttingDown = false;
+
   static forRoot(
     uri: string,
     options: MongooseModuleOptions = {} as MongooseModuleOptions,
@@ -51,17 +60,15 @@ export class MongooseCoreModule {
 
     const connectionProvider = {
       provide: mongooseConnectionName,
-      useFactory: async (manager: MongooseConnectionManager): Promise<any> =>
+      useFactory: async (): Promise<any> =>
         await lastValueFrom(
-          defer(() =>
-            manager.acquire(undefined, async () =>
-              mongooseConnectionFactory(
-                await this.createMongooseConnection(uri, mongooseOptions, {
-                  lazyConnection,
-                  onConnectionCreate,
-                }),
-                mongooseConnectionName,
-              ),
+          defer(async () =>
+            mongooseConnectionFactory(
+              await this.createMongooseConnection(uri, mongooseOptions, {
+                lazyConnection,
+                onConnectionCreate,
+              }),
+              mongooseConnectionName,
             ),
           ).pipe(
             handleRetry(retryAttempts, retryDelay, verboseRetryLog),
@@ -70,15 +77,10 @@ export class MongooseCoreModule {
             }),
           ),
         ),
-      inject: [MongooseConnectionManager],
     };
     return {
       module: MongooseCoreModule,
-      providers: [
-        connectionProvider,
-        mongooseConnectionNameProvider,
-        MongooseConnectionManager,
-      ],
+      providers: [connectionProvider, mongooseConnectionNameProvider],
       exports: [connectionProvider],
     };
   }
@@ -95,10 +97,9 @@ export class MongooseCoreModule {
       provide: mongooseConnectionName,
       useFactory: async (
         mongooseModuleOptions: MongooseModuleFactoryOptions,
-        manager: MongooseConnectionManager,
       ): Promise<any> => {
         const {
-          tenantId,
+          tenantId: _tenantId,
           retryAttempts,
           retryDelay,
           uri,
@@ -110,41 +111,23 @@ export class MongooseCoreModule {
           ...mongooseOptions
         } = mongooseModuleOptions;
 
-        // 同一个缓存键必须始终对应相同的数据库配置。
-        const cacheKey =
-          tenantId === undefined
-            ? undefined
-            : JSON.stringify([tenantId, mongooseConnectionName]);
-
         const mongooseConnectionFactory =
           connectionFactory || ((connection) => connection);
 
         const mongooseConnectionError =
           connectionErrorFactory || ((error) => error);
 
-        //创建连接
-        const createConnection = async (): Promise<Connection> => {
-          const connection = await this.createMongooseConnection(
-            uri as string,
-            mongooseOptions,
-            { lazyConnection, onConnectionCreate },
-          );
-
-          try {
-            return await mongooseConnectionFactory(
-              connection,
-              mongooseConnectionName,
-            );
-          } catch (error) {
-            // factory 失败时，释放本次已经创建的连接，
-            // 保留原始错误交给外层重试。
-            await connection.close().catch(() => undefined);
-            throw error;
-          }
-        };
-
         return await lastValueFrom(
-          defer(() => manager.acquire(cacheKey, createConnection)).pipe(
+          defer(async () =>
+            mongooseConnectionFactory(
+              await this.createMongooseConnection(
+                uri as string,
+                mongooseOptions,
+                { lazyConnection, onConnectionCreate },
+              ),
+              mongooseConnectionName,
+            ),
+          ).pipe(
             handleRetry(retryAttempts, retryDelay, verboseRetryLog),
             catchError((error) => {
               throw mongooseConnectionError(error);
@@ -152,7 +135,7 @@ export class MongooseCoreModule {
           ),
         );
       },
-      inject: [MONGOOSE_MODULE_OPTIONS, MongooseConnectionManager],
+      inject: [MONGOOSE_MODULE_OPTIONS],
     };
     const asyncProviders = this.createAsyncProviders(options);
     return {
@@ -160,7 +143,6 @@ export class MongooseCoreModule {
       imports: options.imports,
       providers: [
         ...asyncProviders,
-        MongooseConnectionManager,
         connectionProvider,
         mongooseConnectionNameProvider,
       ],
@@ -214,14 +196,73 @@ export class MongooseCoreModule {
       onConnectionCreate?: MongooseModuleOptions['onConnectionCreate'];
     },
   ): Promise<Connection> {
-    const connection = mongoose.createConnection(uri, mongooseOptions);
-
-    factoryOptions?.onConnectionCreate?.(connection);
-
-    if (factoryOptions?.lazyConnection) {
-      return connection;
+    if (this.isShuttingDown) {
+      throw new Error(
+        'MongooseCoreModule is shutting down. Cannot create new database connections.',
+      );
     }
 
-    return await connection.asPromise();
+    const key = JSON.stringify([uri, mongooseOptions.dbName ?? null]);
+    const cached = this.connections.get(key);
+    if (cached) {
+      const connection = await cached;
+      return factoryOptions.lazyConnection
+        ? connection
+        : await connection.asPromise();
+    }
+
+    // Cache before creation starts, so concurrent calls share the same promise.
+    const pending = Promise.resolve().then(async () => {
+      const connection = mongoose.createConnection(uri, mongooseOptions);
+      try {
+        factoryOptions.onConnectionCreate?.(connection);
+        if (factoryOptions.lazyConnection) {
+          // Initial connection errors occur after a lazy provider has returned.
+          void connection.asPromise().catch(async () => {
+            if (this.connections.get(key) !== pending) return;
+            this.connections.delete(key);
+            await connection.close().catch(() => undefined);
+          });
+          return connection;
+        }
+        return await connection.asPromise();
+      } catch (error) {
+        await connection.close().catch(() => undefined);
+        throw error;
+      }
+    });
+    this.connections.set(key, pending);
+
+    try {
+      return await pending;
+    } catch (error) {
+      if (this.connections.get(key) === pending) this.connections.delete(key);
+      throw error;
+    }
+  }
+
+  async onApplicationShutdown() {
+    MongooseCoreModule.isShuttingDown = true;
+    try {
+      const pending = [...MongooseCoreModule.connections.values()];
+      // Take ownership before waiting; other module hooks will see an empty cache.
+      MongooseCoreModule.connections.clear();
+      const results = await Promise.allSettled(
+        pending.map(async (promise) => {
+          // Failed creation already cleans up its own connection.
+          const connection = await promise.catch(() => undefined);
+          if (connection) await connection.close();
+        }),
+      );
+      const errors = results.filter((result) => result.status === 'rejected');
+      if (errors.length) {
+        throw new AggregateError(
+          errors.map((result) => result.reason),
+          'Failed to close Mongoose connections',
+        );
+      }
+    } finally {
+      MongooseCoreModule.isShuttingDown = false;
+    }
   }
 }

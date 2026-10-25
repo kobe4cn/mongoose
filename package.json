@@ -1,5 +1,5 @@
 {
-  "name": "@kobe4cn/nestjs-mongoose",
+  "name": "@kobe4cn/nestjs-mongoose-",
   "version": "12.0.0-datasource.1",
   "description": "Unofficial fork of @nestjs/mongoose with tenant connection caching and lifecycle management.",
   "author": "Kevin Yang",

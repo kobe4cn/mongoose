@@ -5,6 +5,7 @@ import { ConnectOptions, Connection, MongooseError } from 'mongoose';
  * @publicApi
  */
 export interface MongooseModuleOptions extends ConnectOptions {
+  tenantId?: string;
   uri?: string;
   retryAttempts?: number;
   retryDelay?: number;
@@ -43,7 +44,7 @@ export interface MongooseModuleAsyncOptions extends Pick<
   'imports'
 > {
   connectionName?: string;
-  tenantId?: string;
+
   useExisting?: Type<MongooseOptionsFactory>;
   useClass?: Type<MongooseOptionsFactory>;
   useFactory?: (

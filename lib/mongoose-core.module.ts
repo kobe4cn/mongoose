@@ -91,13 +91,7 @@ export class MongooseCoreModule implements OnApplicationShutdown {
 
   static forRootAsync(options: MongooseModuleAsyncOptions): DynamicModule {
     const mongooseConnectionName = getConnectionToken(options.connectionName);
-    // 没有指定 tenantId 时，不启用租户缓存。
-    // 同一个缓存键必须始终对应相同的数据库配置。
-    const cacheKey =
-      options.tenantId === undefined
-        ? undefined
-        : JSON.stringify([options.tenantId, mongooseConnectionName]);
-
+    
     const mongooseConnectionNameProvider = {
       provide: MONGOOSE_CONNECTION_NAME,
       useValue: mongooseConnectionName,
@@ -108,6 +102,15 @@ export class MongooseCoreModule implements OnApplicationShutdown {
       useFactory: async (
         mongooseModuleOptions: MongooseModuleFactoryOptions,
       ): Promise<any> => {
+        // 没有指定 tenantId 时，不启用租户缓存。
+        // 同一个缓存键必须始终对应相同的数据库配置。
+        const cacheKey =
+          mongooseModuleOptions.tenantId === undefined
+            ? undefined
+            : JSON.stringify([
+                mongooseModuleOptions.tenantId,
+                mongooseConnectionName,
+              ]);
         const {
           retryAttempts,
           retryDelay,

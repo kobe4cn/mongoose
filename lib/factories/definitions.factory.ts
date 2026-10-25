@@ -110,7 +110,6 @@ export class DefinitionsFactory {
         if (typeof result?.name === 'string') {
           optionsOrType.ref = result.name;
         }
-        optionsOrType.ref = optionsOrType.ref;
       } catch (err) {
         if (err instanceof TypeError) {
           const refClassName = (optionsOrType.ref as Function)?.name;

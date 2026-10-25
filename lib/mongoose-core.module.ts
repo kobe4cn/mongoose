@@ -241,7 +241,6 @@ export class MongooseCoreModule implements OnApplicationShutdown {
       onConnectionCreate?: MongooseModuleOptions['onConnectionCreate'];
     },
   ): Promise<Connection> {
-    mongoose.connections;
     const connection = mongoose.createConnection(uri, mongooseOptions);
 
     factoryOptions?.onConnectionCreate?.(connection);
@@ -250,7 +249,7 @@ export class MongooseCoreModule implements OnApplicationShutdown {
       return connection;
     }
 
-    return connection.asPromise();
+    return await connection.asPromise();
   }
   private connectionReleased = false;
   async onApplicationShutdown() {

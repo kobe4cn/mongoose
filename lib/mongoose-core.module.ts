@@ -22,6 +22,7 @@ import {
 import {
   MONGOOSE_CONNECTION_NAME,
   MONGOOSE_MODULE_OPTIONS,
+  tenantIdConnection,
 } from './mongoose.constants.js';
 
 @Global()
@@ -90,6 +91,12 @@ export class MongooseCoreModule implements OnApplicationShutdown {
 
   static forRootAsync(options: MongooseModuleAsyncOptions): DynamicModule {
     const mongooseConnectionName = getConnectionToken(options.connectionName);
+    // 没有指定 tenantId 时，不启用租户缓存。
+    // 同一个缓存键必须始终对应相同的数据库配置。
+    const cacheKey =
+      options.tenantId === undefined
+        ? undefined
+        : JSON.stringify([options.tenantId, mongooseConnectionName]);
 
     const mongooseConnectionNameProvider = {
       provide: MONGOOSE_CONNECTION_NAME,
@@ -119,17 +126,53 @@ export class MongooseCoreModule implements OnApplicationShutdown {
         const mongooseConnectionError =
           connectionErrorFactory || ((error) => error);
 
-        return await lastValueFrom(
-          defer(async () =>
-            mongooseConnectionFactory(
-              await this.createMongooseConnection(
-                uri as string,
-                mongooseOptions,
-                { lazyConnection, onConnectionCreate },
-              ),
+        //创建连接
+        const createConnection = async (): Promise<Connection> => {
+          const connection = await this.createMongooseConnection(
+            uri as string,
+            mongooseOptions,
+            { lazyConnection, onConnectionCreate },
+          );
+
+          try {
+            return await mongooseConnectionFactory(
+              connection,
               mongooseConnectionName,
-            ),
-          ).pipe(
+            );
+          } catch (error) {
+            // factory 失败时，释放本次已经创建的连接，
+            // 保留原始错误交给外层重试。
+            await connection.close().catch(() => undefined);
+            throw error;
+          }
+        };
+
+        return await lastValueFrom(
+          defer(async () => {
+            if (cacheKey === undefined) {
+              return createConnection();
+            }
+            let entry = tenantIdConnection.get(cacheKey);
+            if (!entry) {
+              entry = {
+                promise: createConnection(),
+                users: 0,
+              };
+              tenantIdConnection.set(cacheKey, entry);
+            }
+            try {
+              const connection = await entry.promise;
+              entry.connection = connection;
+              entry.users += 1;
+              return connection;
+            } catch (err) {
+              //仅移除每次失败的条目
+              if (tenantIdConnection.get(cacheKey) === entry) {
+                tenantIdConnection.delete(cacheKey);
+              }
+              throw err;
+            }
+          }).pipe(
             handleRetry(retryAttempts, retryDelay, verboseRetryLog),
             catchError((error) => {
               throw mongooseConnectionError(error);
@@ -198,6 +241,7 @@ export class MongooseCoreModule implements OnApplicationShutdown {
       onConnectionCreate?: MongooseModuleOptions['onConnectionCreate'];
     },
   ): Promise<Connection> {
+    mongoose.connections;
     const connection = mongoose.createConnection(uri, mongooseOptions);
 
     factoryOptions?.onConnectionCreate?.(connection);
@@ -208,9 +252,29 @@ export class MongooseCoreModule implements OnApplicationShutdown {
 
     return connection.asPromise();
   }
-
+  private connectionReleased = false;
   async onApplicationShutdown() {
+    if (this.connectionReleased) return;
+
+    this.connectionReleased = true;
+
     const connection = this.moduleRef.get<any>(this.connectionName);
+
+    if (!connection) {
+      return;
+    }
+    for (const [key, entry] of tenantIdConnection) {
+      if (entry.connection !== connection) {
+        continue;
+      }
+      entry.users -= 1;
+      if (entry.users === 0) {
+        tenantIdConnection.delete(key);
+        await connection.close();
+      }
+      return;
+    }
+
     if (connection) {
       await connection.close();
     }

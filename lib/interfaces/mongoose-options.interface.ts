@@ -24,8 +24,7 @@ export interface MongooseModuleOptions extends ConnectOptions {
  */
 export interface MongooseOptionsFactory {
   createMongooseOptions():
-    | Promise<MongooseModuleOptions>
-    | MongooseModuleOptions;
+    Promise<MongooseModuleOptions> | MongooseModuleOptions;
 }
 
 /**
@@ -39,9 +38,12 @@ export type MongooseModuleFactoryOptions = Omit<
 /**
  * @publicApi
  */
-export interface MongooseModuleAsyncOptions
-  extends Pick<ModuleMetadata, 'imports'> {
+export interface MongooseModuleAsyncOptions extends Pick<
+  ModuleMetadata,
+  'imports'
+> {
   connectionName?: string;
+  tenantId?: string;
   useExisting?: Type<MongooseOptionsFactory>;
   useClass?: Type<MongooseOptionsFactory>;
   useFactory?: (

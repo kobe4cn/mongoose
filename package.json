@@ -1,9 +1,12 @@
 {
-  "name": "@nestjs/mongoose",
-  "version": "12.0.0",
-  "description": "Nest - modern, fast, powerful node.js web framework (@mongoose)",
-  "author": "Kamil Mysliwiec",
-  "repository": "https://github.com/nestjs/mongoose.git",
+  "name": "@kevin/nestjs-mongoose",
+  "version": "12.0.0-tenant.1",
+  "description": "Unofficial fork of @nestjs/mongoose with tenant connection caching and lifecycle management.",
+  "author": "Kevin Yang",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kobe4cn/mongoose.git"
+  },
   "license": "MIT",
   "type": "module",
   "main": "dist/index.js",
@@ -27,7 +30,8 @@
     "release": "release-it",
     "test:e2e": "vitest run",
     "test:e2e:dev": "vitest",
-    "prepare": "husky"
+    "prepare": "husky",
+    "prepack": "npm run build"
   },
   "devDependencies": {
     "@commitlint/cli": "21.2.3",
@@ -58,5 +62,22 @@
   },
   "lint-staged": {
     "**/*.{ts,json}": []
+  },
+  "contributors": [
+    {
+      "name": "Kevin Yang",
+      "url": "https://github.com/kobe4cn"
+    }
+  ],
+  "homepage": "https://github.com/kobe4cn/mongoose#readme",
+  "bugs": {
+    "url": "https://github.com/kobe4cn/mongoose/issues"
+  },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
   }
 }

@@ -35,9 +35,9 @@ import { MongooseModule, InjectModel, InjectConnection } from '@kobe4cn/nestjs-m
 
 ```ts
 MongooseModule.forRootAsync({
-  tenantId: 'tenant-a',
   connectionName: 'cats-db',
   useFactory: () => ({
+    tenantId: 'tenant-a',
     uri: 'mongodb://localhost/tenant_a',
   }),
 });
